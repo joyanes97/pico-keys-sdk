@@ -3,4 +3,4 @@
 	url = https://github.com/joyanes97/mbedtls
 [submodule "tinycbor"]
 	path = tinycbor
-	url = https://github.com/intel/tinycbor.git
+	url = https://github.com/joyanes97/tinycbor
