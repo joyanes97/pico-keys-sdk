@@ -20,11 +20,12 @@
 #include "tusb.h"
 #if defined(PICO_PLATFORM)
 #include "bsp/board.h"
-#elif defined(ESP_PLATFORM)
-static portMUX_TYPE mutex = portMUX_INITIALIZER_UNLOCKED;
 #endif
 #elif defined(ENABLE_EMULATION)
 #include "emulation.h"
+#endif
+#if defined(ESP_PLATFORM)
+static portMUX_TYPE mutex = portMUX_INITIALIZER_UNLOCKED;
 #endif
 #include "ctap_hid.h"
 #include "pico_keys_version.h"
@@ -59,6 +60,8 @@ void hid_init(void);
 void hid_task(void);
 #ifdef PICO_FIDO_EMBEDDED
 int pico_fido_hid_receive_packet(const uint8_t packet[64]);
+bool pico_fido_hid_ready(void);
+void pico_fido_hid_reset(void);
 #endif
 #ifdef ENABLE_EMULATION
 uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer, uint16_t reqlen);
@@ -82,6 +85,14 @@ void hid_init(void) {
         hid_tx = (usb_buffer_t *)calloc(ITF_HID_TOTAL, sizeof(usb_buffer_t));
     }
 }
+
+#ifdef PICO_FIDO_EMBEDDED
+bool pico_fido_hid_ready(void) {
+    return ITF_HID_TOTAL > 0 && ITF_HID_CTAP != ITF_INVALID &&
+           send_buffer_size != NULL && last_write_result != NULL &&
+           hid_rx != NULL && hid_tx != NULL;
+}
+#endif
 
 int driver_init_hid(void) {
 #if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
@@ -310,7 +321,7 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
 
 #ifdef PICO_FIDO_EMBEDDED
 int pico_fido_hid_receive_packet(const uint8_t packet[64]) {
-    if (packet == NULL || hid_rx == NULL || ITF_HID_CTAP == ITF_INVALID) {
+    if (packet == NULL || !pico_fido_hid_ready()) {
         return PICOKEY_ERR_NULL_PARAM;
     }
     memcpy(hid_rx[ITF_HID_CTAP].buffer + hid_rx[ITF_HID_CTAP].w_ptr, packet, 64);
@@ -339,6 +350,38 @@ uint8_t last_cmd = 0;
 uint8_t last_seq = 0;
 CTAPHID_FRAME last_req = { 0 };
 uint32_t lock = 0;
+
+#ifdef PICO_FIDO_EMBEDDED
+void pico_fido_hid_reset(void) {
+    msg_packet.len = 0;
+    msg_packet.current_len = 0;
+    last_cmd_time = 0;
+    last_packet_time = 0;
+    last_cmd = 0;
+    last_seq = 0;
+    lock = 0;
+    memset(&last_req, 0, sizeof(last_req));
+    if (pico_fido_hid_ready()) {
+        memset(&hid_rx[ITF_HID_CTAP], 0, sizeof(hid_rx[ITF_HID_CTAP]));
+        memset(&hid_tx[ITF_HID_CTAP], 0, sizeof(hid_tx[ITF_HID_CTAP]));
+        send_buffer_size[ITF_HID_CTAP] = 0;
+        last_write_result[ITF_HID_CTAP] = WRITE_UNKNOWN;
+    }
+}
+
+static uint32_t embedded_next_cid = 1;
+
+static uint32_t embedded_allocate_cid(void) {
+    uint32_t cid = embedded_next_cid++;
+    if (embedded_next_cid == 0 || embedded_next_cid == UINT32_MAX) {
+        embedded_next_cid = 1;
+    }
+    return ((cid & 0x000000FFu) << 24) |
+           ((cid & 0x0000FF00u) << 8) |
+           ((cid & 0x00FF0000u) >> 8) |
+           ((cid & 0xFF000000u) >> 24);
+}
+#endif
 
 uint8_t thread_type = 0; //1 is APDU, 2 is CBOR
 extern bool cancel_button;
@@ -404,6 +447,12 @@ int driver_process_usb_packet_hid(uint16_t read) {
             last_cmd = ctap_req->init.cmd;
             last_seq = 0;
             last_cmd_time = board_millis();
+#ifdef PICO_FIDO_EMBEDDED
+            if ((last_cmd == CTAPHID_PING || last_cmd == CTAPHID_SYNC) &&
+                MSG_LEN(ctap_req) > sizeof(ctap_req->init.data)) {
+                return ctap_error(CTAP1_ERR_INVALID_LEN);
+            }
+#endif
         }
         else {
             if (msg_packet.len == 0) { //Received a cont with a prior init pkt
@@ -424,17 +473,28 @@ int driver_process_usb_packet_hid(uint16_t read) {
             }
         }
         if (ctap_req->init.cmd == CTAPHID_INIT) {
+            if (MSG_LEN(ctap_req) != sizeof(((CTAPHID_INIT_REQ *)0)->nonce)) {
+                return ctap_error(CTAP1_ERR_INVALID_LEN);
+            }
             card_exit();
             hid_tx[ITF_HID_CTAP].r_ptr = hid_tx[ITF_HID_CTAP].w_ptr = 0;
             init_fido();
             CTAPHID_INIT_REQ *req = (CTAPHID_INIT_REQ *) ctap_req->init.data;
             CTAPHID_INIT_RESP *resp = (CTAPHID_INIT_RESP *) ctap_resp->init.data;
             memcpy(resp->nonce, req->nonce, sizeof(resp->nonce));
+#ifdef PICO_FIDO_EMBEDDED
+            resp->cid = embedded_allocate_cid();
+#else
             resp->cid = 0x01000000;
+#endif
             resp->versionInterface = CTAPHID_IF_VERSION;
             resp->versionMajor = get_version_major ? get_version_major() : PICO_KEYS_SDK_VERSION_MAJOR;
             resp->versionMinor = get_version_minor ? get_version_minor() : PICO_KEYS_SDK_VERSION_MINOR;
+#ifdef PICO_FIDO_EMBEDDED
+            resp->capFlags = CAPFLAG_WINK;
+#else
             resp->capFlags = CAPFLAG_WINK | CAPFLAG_CBOR;
+#endif
 
             ctap_resp->cid = ctap_req->cid;
             ctap_resp->init.cmd = CTAPHID_INIT;

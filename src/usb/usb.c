@@ -116,14 +116,14 @@ void usb_init(void)
     if (enabled_usb_itf & PHY_USB_ITF_HID) {
         ITF_HID_CTAP = ITF_HID_TOTAL++;
         ITF_HID = ITF_TOTAL++;
-#ifndef ENABLE_EMULATION
+#if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
         string_desc_itf[ITF_TOTAL - 1] = string_desc_arr[5];
 #endif
     }
     if (enabled_usb_itf & PHY_USB_ITF_KB) {
         ITF_HID_KB = ITF_HID_TOTAL++;
         ITF_KEYBOARD = ITF_TOTAL++;
-#ifndef ENABLE_EMULATION
+#if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
         string_desc_itf[ITF_TOTAL - 1] = string_desc_arr[6];
 #endif
     }
