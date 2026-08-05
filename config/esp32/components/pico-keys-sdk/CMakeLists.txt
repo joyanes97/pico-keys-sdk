@@ -7,6 +7,7 @@ if(PICO_FIDO_EMBEDDED AND NOT PICO_KEYS_SOURCES)
     set(ENABLE_OTP_APP 0)
     set(ENABLE_PQC 0)
     add_compile_definitions(PICO_FIDO_EMBEDDED=1 USB_ITF_HID=1)
+    include(${PICO_KEYS_SDK_DIR}/cmake/options.cmake)
     include(${PICO_KEYS_SDK_DIR}/pico_keys_sdk_import.cmake)
 endif()
 
