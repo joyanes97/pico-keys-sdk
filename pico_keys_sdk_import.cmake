@@ -106,7 +106,7 @@ endif()
 add_compile_definitions(DEBUG_APDU=${DEBUG_APDU})
 if(NOT ESP_PLATFORM)
     add_compile_definitions(MBEDTLS_CONFIG_FILE="${CMAKE_CURRENT_LIST_DIR}/config/mbedtls_config.h")
-else()
+elseif(NOT PICO_FIDO_EMBEDDED)
     add_compile_definitions(CFG_TUSB_CONFIG_FILE="${CMAKE_CURRENT_LIST_DIR}/src/usb/tusb_config.h")
 endif()
 
@@ -339,8 +339,13 @@ if(ENABLE_PQC)
     )
 endif()
 
+if(NOT PICO_FIDO_EMBEDDED)
+    list(APPEND PICO_KEYS_SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/src/main.c
+    )
+endif()
+
 list(APPEND PICO_KEYS_SOURCES
-    ${CMAKE_CURRENT_LIST_DIR}/src/main.c
     ${CMAKE_CURRENT_LIST_DIR}/src/usb/usb.c
     ${CMAKE_CURRENT_LIST_DIR}/src/fs/file.c
     ${CMAKE_CURRENT_LIST_DIR}/src/fs/flash.c
@@ -570,7 +575,7 @@ if(ENABLE_EMULATION)
     list(APPEND INCLUDES
         ${CMAKE_CURRENT_LIST_DIR}/src/usb/emulation
     )
-else()
+elseif(NOT PICO_FIDO_EMBEDDED)
     list(APPEND PICO_KEYS_SOURCES
         ${CMAKE_CURRENT_LIST_DIR}/src/usb/usb_descriptors.c
     )

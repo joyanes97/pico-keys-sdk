@@ -25,9 +25,9 @@
 #endif
 #include "usb.h"
 #include "apdu.h"
-#ifndef ENABLE_EMULATION
+#if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
 #include "tusb.h"
-#else
+#elif defined(ENABLE_EMULATION)
 #include "emulation.h"
 #endif
 
@@ -71,13 +71,13 @@ void usb_set_timeout_counter(uint8_t itf, uint32_t v) {
 queue_t usb_to_card_q = {0};
 queue_t card_to_usb_q = {0};
 
-#ifndef ENABLE_EMULATION
+#if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
 extern tusb_desc_device_t desc_device;
 extern char *string_desc_itf[4], *string_desc_arr[];
 #endif
 void usb_init(void)
 {
-#ifndef ENABLE_EMULATION
+#if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
     if (phy_data.vidpid_present) {
         desc_device.idVendor = phy_data.vid;
         desc_device.idProduct = phy_data.pid;
@@ -87,13 +87,19 @@ void usb_init(void)
         phy_data.pid = desc_device.idProduct;
         phy_data.vidpid_present = true;
     }
+#endif
+#ifndef ENABLE_EMULATION
     mutex_init(&mutex);
 #endif
     queue_init(&card_to_usb_q, sizeof(uint32_t), 64);
     queue_init(&usb_to_card_q, sizeof(uint32_t), 64);
 
+#ifdef PICO_FIDO_EMBEDDED
+    uint8_t enabled_usb_itf = PHY_USB_ITF_HID;
+#else
     uint8_t enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_WCID | PHY_USB_ITF_HID | PHY_USB_ITF_KB;
-#ifndef ENABLE_EMULATION
+#endif
+#if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
     if (phy_data.enabled_usb_itf_present) {
         enabled_usb_itf = phy_data.enabled_usb_itf;
     }
@@ -152,7 +158,7 @@ void usb_init(void)
         ccid_init();
     }
 #endif
-#ifdef ESP_PLATFORM
+#if defined(ESP_PLATFORM) && !defined(PICO_FIDO_EMBEDDED)
     usb_desc_setup();
 #endif
 }
@@ -236,7 +242,9 @@ void usb_send_event(uint32_t flag) {
 }
 
 void card_init_core1(void) {
+#ifndef PICO_FIDO_EMBEDDED
     low_flash_init_core1();
+#endif
 }
 
 uint16_t finished_data_size = 0;
@@ -346,7 +354,7 @@ int card_status(uint8_t itf) {
     return PICOKEY_ERR_FILE_NOT_FOUND;
 }
 
-#ifndef USB_ITF_CCID
+#if !defined(USB_ITF_CCID) && !defined(PICO_FIDO_EMBEDDED)
 #include "device/usbd_pvt.h"
 usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count) {
     *driver_count = 0;

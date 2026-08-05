@@ -16,14 +16,14 @@
  */
 
 #include "pico_keys.h"
-#ifndef ENABLE_EMULATION
+#if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
 #include "tusb.h"
 #if defined(PICO_PLATFORM)
 #include "bsp/board.h"
 #elif defined(ESP_PLATFORM)
 static portMUX_TYPE mutex = portMUX_INITIALIZER_UNLOCKED;
 #endif
-#else
+#elif defined(ENABLE_EMULATION)
 #include "emulation.h"
 #endif
 #include "ctap_hid.h"
@@ -57,6 +57,9 @@ int driver_write_hid(uint8_t itf, const uint8_t *buffer, uint16_t buffer_size);
 static int driver_process_usb_nopacket_hid(void);
 void hid_init(void);
 void hid_task(void);
+#ifdef PICO_FIDO_EMBEDDED
+int pico_fido_hid_receive_packet(const uint8_t packet[64]);
+#endif
 #ifdef ENABLE_EMULATION
 uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer, uint16_t reqlen);
 void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize);
@@ -81,7 +84,7 @@ void hid_init(void) {
 }
 
 int driver_init_hid(void) {
-#ifndef ENABLE_EMULATION
+#if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
     static bool _init = false;
     if (_init == false) {
         tud_init(BOARD_TUD_RHPORT);
@@ -108,6 +111,7 @@ int driver_init_hid(void) {
 // USB HID
 //--------------------------------------------------------------------+
 
+#ifndef PICO_FIDO_EMBEDDED
 uint16_t (*hid_get_report_cb)(uint8_t, uint8_t, hid_report_type_t, uint8_t *, uint16_t) = NULL;
 // Invoked when received GET_REPORT control request
 // Application must fill buffer report's content and return its length.
@@ -128,6 +132,7 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
     }
     return reqlen;
 }
+#endif
 
 static uint32_t hid_write_offset(uint16_t size, uint16_t offset) {
     if (hid_tx[ITF_HID_CTAP].buffer[offset] != 0x81) {
@@ -142,7 +147,7 @@ static uint32_t hid_write(uint16_t size) {
     return hid_write_offset(size, 0);
 }
 
-#ifndef ENABLE_EMULATION
+#if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
 static uint8_t keyboard_buffer[256];
 static uint8_t keyboard_buffer_len = 0;
 static const uint8_t conv_table[128][2] =  { HID_ASCII_TO_KEYCODE };
@@ -210,7 +215,7 @@ static void send_hid_report(uint8_t report_id) {
 }
 #endif
 
-void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_t len) {
+static void hid_report_complete(uint8_t instance, uint8_t const *report, uint16_t len) {
     //printf("report_complete %d %d %d\n", instance, len, send_buffer_size[instance]);
     if (instance == ITF_HID_CTAP && len > 0) {
 #ifdef ESP_PLATFORM
@@ -252,21 +257,33 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
     }
 }
 
+#ifndef PICO_FIDO_EMBEDDED
+void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_t len) {
+    hid_report_complete(instance, report, len);
+}
+#endif
+
 int driver_write_hid(uint8_t itf, const uint8_t *buffer, uint16_t buffer_size) {
     if (last_write_result[itf] == WRITE_PENDING) {
         return 0;
     }
+#ifdef PICO_FIDO_EMBEDDED
+    extern bool pico_fido_embedded_send_packet(const uint8_t packet[64]);
+    bool r = buffer_size == 64 && pico_fido_embedded_send_packet(buffer);
+#else
     bool r = tud_hid_n_report(itf, 0, buffer, buffer_size);
+#endif
     last_write_result[itf] = r ? WRITE_PENDING : WRITE_FAILED;
     if (last_write_result[itf] == WRITE_FAILED) {
         return 0;
     }
-#ifdef ENABLE_EMULATION
-    tud_hid_report_complete_cb(ITF_HID_CTAP, buffer, buffer_size);
+#if defined(ENABLE_EMULATION) || defined(PICO_FIDO_EMBEDDED)
+    hid_report_complete(ITF_HID_CTAP, buffer, buffer_size);
 #endif
     return MIN(64, buffer_size);
 }
 
+#ifndef PICO_FIDO_EMBEDDED
 int (*hid_set_report_cb)(uint8_t, uint8_t, hid_report_type_t, uint8_t const *, uint16_t) = NULL;
 // Invoked when received SET_REPORT control request or
 // received data on OUT endpoint ( Report ID = 0, Type = 0 )
@@ -289,6 +306,22 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
         }
     }
 }
+#endif
+
+#ifdef PICO_FIDO_EMBEDDED
+int pico_fido_hid_receive_packet(const uint8_t packet[64]) {
+    if (packet == NULL || hid_rx == NULL || ITF_HID_CTAP == ITF_INVALID) {
+        return PICOKEY_ERR_NULL_PARAM;
+    }
+    memcpy(hid_rx[ITF_HID_CTAP].buffer + hid_rx[ITF_HID_CTAP].w_ptr, packet, 64);
+    hid_rx[ITF_HID_CTAP].w_ptr += 64;
+    int result = driver_process_usb_packet_hid(64);
+    if (result == 0) {
+        driver_process_usb_nopacket_hid();
+    }
+    return PICOKEY_OK;
+}
+#endif
 
 uint32_t last_cmd_time = 0, last_packet_time = 0;
 int ctap_error(uint8_t error) {
@@ -488,6 +521,12 @@ int driver_process_usb_packet_hid(uint16_t read) {
         else if ((last_cmd == CTAPHID_MSG || last_cmd == CTAPHID_OTP) &&
                  (msg_packet.len == 0 ||
                   (msg_packet.len == msg_packet.current_len && msg_packet.len > 0))) {
+#ifdef PICO_FIDO_EMBEDDED
+            /* U2F depends on persistent key material; locked mode must not touch storage. */
+            msg_packet.len = msg_packet.current_len = 0;
+            last_packet_time = 0;
+            return ctap_error(CTAP1_ERR_OTHER);
+#else
             if (last_cmd == CTAPHID_OTP) {
                 is_nk = true;
 #ifdef ENABLE_OATH_APP
@@ -509,6 +548,7 @@ int driver_process_usb_packet_hid(uint16_t read) {
             DEBUG_PAYLOAD(apdu.data, (int) apdu.nc);
             msg_packet.len = msg_packet.current_len = 0;
             last_packet_time = 0;
+#endif
         }
         else if ((last_cmd == CTAPHID_CBOR || last_cmd >= CTAPHID_VENDOR_FIRST) &&
                  (msg_packet.len == 0 || (msg_packet.len == msg_packet.current_len && msg_packet.len > 0))) {
@@ -631,7 +671,7 @@ void hid_task(void) {
 
         }
     }
-#ifndef ENABLE_EMULATION
+#if !defined(ENABLE_EMULATION) && !defined(PICO_FIDO_EMBEDDED)
     /* Keyboard ITF */
     // Poll every 10ms
     const uint32_t interval_ms = 10;

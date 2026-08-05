@@ -1,5 +1,15 @@
 set(PICO_KEYS_SDK_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../..)
 
+if(PICO_FIDO_EMBEDDED AND NOT PICO_KEYS_SOURCES)
+    set(USB_ITF_HID 1)
+    set(USB_ITF_CCID 0)
+    set(ENABLE_OATH_APP 0)
+    set(ENABLE_OTP_APP 0)
+    set(ENABLE_PQC 0)
+    add_compile_definitions(PICO_FIDO_EMBEDDED=1 USB_ITF_HID=1)
+    include(${PICO_KEYS_SDK_DIR}/pico_keys_sdk_import.cmake)
+endif()
+
 set(PICO_KEYS_INCLUDE_DIRS
     ${PICO_KEYS_SDK_DIR}/src
     ${PICO_KEYS_SDK_DIR}/src/fs
@@ -12,11 +22,14 @@ set(PICO_KEYS_INCLUDE_DIRS
 set(PICO_KEYS_REQUIRES
     bootloader_support
     esp_partition
-    esp_tinyusb
     efuse
     mbedtls
     tinycbor
 )
+
+if(NOT PICO_FIDO_EMBEDDED)
+    list(APPEND PICO_KEYS_REQUIRES esp_tinyusb)
+endif()
 
 if(ENABLE_PQC)
     list(APPEND PICO_KEYS_INCLUDE_DIRS
