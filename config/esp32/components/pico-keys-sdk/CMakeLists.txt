@@ -11,6 +11,23 @@ if(PICO_FIDO_EMBEDDED AND NOT PICO_KEYS_SOURCES)
     include(${PICO_KEYS_SDK_DIR}/pico_keys_sdk_import.cmake)
 endif()
 
+set(PICO_KEYS_EMBEDDED_SOURCES
+    ${PICO_KEYS_SDK_DIR}/src/usb/usb.c
+    ${PICO_KEYS_SDK_DIR}/src/usb/hid/hid.c
+    ${PICO_KEYS_SDK_DIR}/src/fs/file.c
+    ${PICO_KEYS_SDK_DIR}/src/fs/flash.c
+    ${PICO_KEYS_SDK_DIR}/src/fs/low_flash.c
+    ${PICO_KEYS_SDK_DIR}/src/fs/phy.c
+    ${PICO_KEYS_SDK_DIR}/src/rng/random.c
+    ${PICO_KEYS_SDK_DIR}/src/rng/hwrng.c
+    ${PICO_KEYS_SDK_DIR}/src/crypto_utils.c
+    ${PICO_KEYS_SDK_DIR}/src/asn1.c
+)
+
+if(PICO_FIDO_EMBEDDED)
+    set(PICO_KEYS_SOURCES ${PICO_KEYS_EMBEDDED_SOURCES})
+endif()
+
 set(PICO_KEYS_INCLUDE_DIRS
     ${PICO_KEYS_SDK_DIR}/src
     ${PICO_KEYS_SDK_DIR}/src/fs
@@ -23,13 +40,12 @@ set(PICO_KEYS_INCLUDE_DIRS
 set(PICO_KEYS_REQUIRES
     bootloader_support
     esp_partition
-    efuse
     mbedtls
     tinycbor
 )
 
 if(NOT PICO_FIDO_EMBEDDED)
-    list(APPEND PICO_KEYS_REQUIRES esp_tinyusb)
+    list(APPEND PICO_KEYS_REQUIRES efuse esp_tinyusb)
 endif()
 
 if(ENABLE_PQC)
@@ -50,4 +66,6 @@ idf_component_register(
     REQUIRES ${PICO_KEYS_REQUIRES}
 )
 
-idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE ON)
+if(NOT PICO_FIDO_EMBEDDED)
+    idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE ON)
+endif()
